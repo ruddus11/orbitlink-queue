@@ -1,0 +1,21 @@
+{
+  "configurations": [
+    {
+      "name": "Mac (FreeRTOS POSIX)",
+      "includePath": [
+        "${workspaceFolder}",
+        "${workspaceFolder}/include",
+        "${workspaceFolder}/FreeRTOS-Kernel/include",
+        "${workspaceFolder}/FreeRTOS-Kernel/portable/ThirdParty/GCC/Posix",
+        "${workspaceFolder}/FreeRTOS-Kernel/portable/ThirdParty/GCC/Posix/utils",
+        "${workspaceFolder}/../FreeRTOS_시뮬레이터/FreeRTOS-Kernel/include",
+        "${workspaceFolder}/../FreeRTOS_시뮬레이터/FreeRTOS-Kernel/portable/ThirdParty/GCC/Posix",
+        "${workspaceFolder}/../FreeRTOS_시뮬레이터/FreeRTOS-Kernel/portable/ThirdParty/GCC/Posix/utils"
+      ],
+      "compilerPath": "/usr/bin/clang",
+      "cStandard": "gnu11",
+      "intelliSenseMode": "macos-clang-arm64"
+    }
+  ],
+  "version": 4
+}

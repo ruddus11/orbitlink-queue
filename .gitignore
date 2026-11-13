@@ -1,0 +1,7 @@
+build/
+orbitlink_queue
+FreeRTOS-Kernel/
+node_modules/
+.DS_Store
+*.o
+*.d

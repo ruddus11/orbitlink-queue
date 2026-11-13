@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "디버그: 시나리오 3",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/orbitlink_queue",
+      "args": ["3"],
+      "cwd": "${workspaceFolder}",
+      "MIMode": "lldb",
+      "preLaunchTask": "빌드 (make)",
+      "externalConsole": false
+    },
+    {
+      "name": "디버그: 자가 검사",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/orbitlink_queue",
+      "args": ["selftest"],
+      "cwd": "${workspaceFolder}",
+      "MIMode": "lldb",
+      "preLaunchTask": "빌드 (make)",
+      "externalConsole": false
+    }
+  ]
+}

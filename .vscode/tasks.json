@@ -1,0 +1,112 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "빌드 (make)",
+      "type": "shell",
+      "command": "make",
+      "group": "build",
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    {
+      "label": "빌드 + 실행 (전체 all)",
+      "type": "shell",
+      "command": "make && ./orbitlink_queue all",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "시나리오 1: 평상시",
+      "type": "shell",
+      "command": "make && ./orbitlink_queue 1",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "시나리오 2: 일반 메시지 폭주",
+      "type": "shell",
+      "command": "make && ./orbitlink_queue 2",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "시나리오 3: 긴급 끼어들기",
+      "type": "shell",
+      "command": "make && ./orbitlink_queue 3",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "비교 실험 (FIFO vs 우선순위)",
+      "type": "shell",
+      "command": "make && ./orbitlink_queue compare",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "자가 검사 (selftest)",
+      "type": "shell",
+      "command": "make && ./orbitlink_queue selftest",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "결과 파일 저장 (결과/시나리오_결과.txt)",
+      "type": "shell",
+      "command": "make result",
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    {
+      "label": "깨끗이 다시 빌드 (make clean)",
+      "type": "shell",
+      "command": "make clean && make",
+      "problemMatcher": [
+        "$gcc"
+      ]
+    }
+  ]
+}
