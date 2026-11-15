@@ -173,3 +173,21 @@ Retry 태스크는 대기함에서 꺼내 backoff만큼 기다린 뒤 `msg.retry
 - 암호화: `mq_send()` 전에 `payload`를 XOR 하고 `encrypted = 1`로 표시합니다. 큐 모듈은 payload 내용을 보지 않습니다.
 - 로그: 태스크 안에서 `printf`를 직접 쓰면 POSIX 포트에서 교착이나 출력 누락이 생길 수 있습니다. `main_demo.c`의 `vLog()`처럼 크리티컬 섹션으로 감싸서 쓰세요.
 - 통계 로그: `mq_get_status()`로 유형별 sent, received, failed, 길이, 대기 tick을 얻습니다.
+
+## Sender/Receiver app and integrated version (added 2026-11-15)
+
+| Folder | What it is |
+|---|---|
+| `OrbitLink_App/` | Sender x3 (Emergency/System/Normal) + Receiver on top of this queue module. 5 automatic PASS/FAIL checks, including Emergency > System > Normal dequeue order. |
+| `OrbitLink_Integrated/` | `OrbitLink_App` + XOR encryption and Logger task (adapted from Shushant's code to `orbit_msg_t`). 7 automatic checks. Retry is not included yet. |
+
+Both use the same `msg_queue.c` and `orbitlink_msg.h` as this repository. Shared message format for every member: `include/orbitlink_msg.h` (`orbit_msg_t`).
+
+```bash
+cd OrbitLink_App          # or OrbitLink_Integrated
+# put FreeRTOS-Kernel (commit ca75944) inside this folder, see "Getting the kernel" above
+make                      # Linux: make CC=gcc
+./orbitlink_app           # or ./orbitlink_integrated
+echo $?                   # 0 = all checks passed
+```
+Each folder has a Korean README with details.

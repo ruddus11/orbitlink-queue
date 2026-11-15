@@ -5,3 +5,6 @@ node_modules/
 .DS_Store
 *.o
 *.d
+OrbitLink_App/orbitlink_app
+OrbitLink_Integrated/orbitlink_integrated
+_to_delete/
