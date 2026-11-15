@@ -22,9 +22,9 @@ echo $?      # 0이면 통과
 | 종료 | `exit(0)` | `vTaskEndScheduler()` | 정상 종료 경로 사용 |
 | 큐 | FIFO 1개 | 우선순위 큐 3개 | 경연 큐 모듈 사용 |
 
-## 판정 (7개)
+## 판정 (8개)
 전부 수신, 유형별 통계, 같은 유형 안의 순서, 큐 안에서 암호문 상태, 복호화 결과 일치,
-Emergency → System → Normal 순서, 로그 손실 0.
+Emergency → System → Normal 순서, Emergency Sender 태스크 우선순위가 가장 높음(4, 나머지 3), 로그 손실 0.
 
 ## 남은 것
 - Retry와 backoff는 없습니다. `main()`의 `mq_init()` 다음에 `mq_set_full_callback()`으로 붙입니다.

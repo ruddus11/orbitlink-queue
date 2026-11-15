@@ -178,8 +178,8 @@ Retry 태스크는 대기함에서 꺼내 backoff만큼 기다린 뒤 `msg.retry
 
 | Folder | What it is |
 |---|---|
-| `OrbitLink_App/` | Sender x3 (Emergency/System/Normal) + Receiver on top of this queue module. 5 automatic PASS/FAIL checks, including Emergency > System > Normal dequeue order. |
-| `OrbitLink_Integrated/` | `OrbitLink_App` + XOR encryption and Logger task (adapted from Shushant's code to `orbit_msg_t`). 7 automatic checks. Retry is not included yet. |
+| `OrbitLink_App/` | Sender x3 (Emergency/System/Normal) + Receiver on top of this queue module. 6 automatic PASS/FAIL checks, including Emergency > System > Normal dequeue order and a higher task priority for the Emergency sender (4 vs 3). |
+| `OrbitLink_Integrated/` | `OrbitLink_App` + XOR encryption and Logger task (adapted from Shushant's code to `orbit_msg_t`). 8 automatic checks. Retry is not included yet. |
 
 Both use the same `msg_queue.c` and `orbitlink_msg.h` as this repository. Shared message format for every member: `include/orbitlink_msg.h` (`orbit_msg_t`).
 

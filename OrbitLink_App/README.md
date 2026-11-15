@@ -16,7 +16,7 @@ make          # 맥은 clang, 리눅스는 make CC=gcc
 ## 동작
 1. Sender 3개가 12개 메시지(E 3, S 3, N 6)를 도착 순서를 섞어서 보냅니다.
 2. Receiver는 300 tick에 시작해서 모두 큐에 쌓인 뒤 꺼냅니다.
-3. Checker가 5가지를 판정합니다. 전부 수신, 유형별 통계, 같은 유형 안의 순서, payload 무결, Emergency → System → Normal.
+3. Checker가 6가지를 판정합니다. 전부 수신, 유형별 통계, 같은 유형 안의 순서, payload 무결, Emergency → System → Normal, Emergency Sender의 태스크 우선순위가 가장 높음(4, 나머지 3).
 
 실제 출력 예는 `실행결과.txt`를 보세요.
 

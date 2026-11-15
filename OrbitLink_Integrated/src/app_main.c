@@ -6,7 +6,9 @@
  *          모든 태스크 ── log_event() ──> [ 로그 큐 ] ──> Logger (출력은 여기서만)
  *
  * 판정: 전부 수신, 유형별 통계, 같은 유형 안의 순서, 큐 안에서 암호화 상태,
- *       복호화 결과가 원문과 일치, Emergency → System → Normal 순서, 로그 손실 0.
+ *       복호화 결과가 원문과 일치, Emergency → System → Normal 순서,
+ *       Emergency Sender 태스크 우선순위가 가장 높음, 로그 손실 0.
+ * 태스크 우선순위: Emergency Sender 4, System/Normal Sender 3 (큐의 처리 순서와 함께 Emergency를 우대).
  * Retry는 아직 없다. 붙일 자리는 main()의 mq_init() 다음 (mq_set_full_callback).
  */
 
@@ -24,7 +26,8 @@
 #include "orbitlink_xor.h"
 
 #define PRIO_CHECKER            5U
-#define PRIO_SENDER             3U
+#define PRIO_SENDER_EMERGENCY   4U      /* Emergency Sender는 다른 Sender보다 먼저 CPU를 받는다 */
+#define PRIO_SENDER             3U      /* System, Normal Sender */
 #define PRIO_RECEIVER           2U
 #define PRIO_LOGGER             1U      /* 가장 낮다. 다른 태스크가 쉴 때 몰아서 출력한다 */
 
@@ -61,6 +64,7 @@ static uint32_t s_rx_count;
 static uint32_t s_seq_errors;
 static uint32_t s_not_encrypted;    /* 큐에서 꺼냈는데 평문이었던 메시지 수 */
 static uint32_t s_decrypt_errors;   /* 복호화 결과가 원문과 다른 메시지 수 */
+static UBaseType_t s_sender_prio[ ORBIT_MSG_TYPE_COUNT ];   /* 각 Sender가 실제로 받은 태스크 우선순위 */
 static SemaphoreHandle_t s_receiver_done;
 static volatile int s_exit_code = EXIT_SUCCESS;
 
@@ -74,6 +78,8 @@ static void sender_task( void * param )
     const sender_arg_t * arg = ( const sender_arg_t * ) param;
     uint16_t len = ( uint16_t ) strlen( arg->text );
     uint32_t i;
+
+    s_sender_prio[ arg->type ] = uxTaskPriorityGet( NULL );   /* 설정이 실제로 적용됐는지 판정에서 확인 */
 
     vTaskDelay( arg->start_delay );
 
@@ -212,6 +218,9 @@ static void checker_task( void * param )
     check( "큐 안에서는 암호문 상태", s_not_encrypted == 0U );
     check( "복호화 결과가 원문과 일치", s_decrypt_errors == 0U );
     check( "꺼낸 순서가 Emergency -> System -> Normal", order_ok );
+    check( "Emergency Sender 태스크 우선순위가 가장 높음",
+           ( s_sender_prio[ ORBIT_MSG_EMERGENCY ] > s_sender_prio[ ORBIT_MSG_SYSTEM ] ) &&
+           ( s_sender_prio[ ORBIT_MSG_EMERGENCY ] > s_sender_prio[ ORBIT_MSG_NORMAL ] ) );
     check( "로그 손실 0", log_dropped() == 0U );   /* 마지막 판정이어야 위 줄들까지 포함해 센다 */
     log_finish( ( s_exit_code == EXIT_SUCCESS ) ? "결과: PASS" : "결과: FAIL" );   /* Logger가 출력 후 스케줄러를 끝낸다 */
 
@@ -243,7 +252,9 @@ int main( void )
 
     for( type = 0; type < ORBIT_MSG_TYPE_COUNT; type++ )
     {
-        if( xTaskCreate( sender_task, "SENDER", configMINIMAL_STACK_SIZE, &s_sender_args[ type ], PRIO_SENDER, NULL ) != pdPASS )
+        UBaseType_t prio = ( type == ORBIT_MSG_EMERGENCY ) ? PRIO_SENDER_EMERGENCY : PRIO_SENDER;
+
+        if( xTaskCreate( sender_task, "SENDER", configMINIMAL_STACK_SIZE, &s_sender_args[ type ], prio, NULL ) != pdPASS )
         {
             fprintf( stderr, "태스크 생성 실패: SENDER\n" );
             return EXIT_FAILURE;

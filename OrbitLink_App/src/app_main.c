@@ -13,6 +13,12 @@
  *   2. 같은 유형 안에서 순서(seq)가 지켜졌는가
  *   3. payload가 깨지지 않았는가 (유형별 접두어로 확인)
  *   4. 큐에 다 쌓인 뒤 꺼낼 때 Emergency → System → Normal 순서인가
+ *   5. Emergency Sender의 태스크 우선순위가 다른 Sender보다 높은가
+ *
+ * [Emergency를 두 단계로 우대한다]
+ *   - 태스크 우선순위 : Emergency Sender 4, System/Normal Sender 3. 보낼 차례가 겹치면 먼저 CPU를 받는다.
+ *   - 메시지 처리 순서 : 큐 모듈이 Emergency 큐부터 꺼낸다. Receiver가 무엇을 먼저 처리할지를 정한다.
+ *   태스크 우선순위만으로는 이미 큐에 쌓인 Normal 뒤의 Emergency를 앞당길 수 없어서 두 가지를 함께 쓴다.
  *
  * [왜 Receiver를 늦게 시작하는가]
  * Receiver 시작 전에 Sender가 모두 보내 두면 큐에는 도착 순서와 상관없이 전부 쌓여 있다.
@@ -39,7 +45,8 @@
 /* ---------- 실험 파라미터 ---------- */
 
 #define PRIO_CHECKER            5U      /* 판정 태스크. 가장 높아야 Receiver 종료를 바로 본다 */
-#define PRIO_SENDER             3U
+#define PRIO_SENDER_EMERGENCY   4U      /* Emergency Sender는 다른 Sender보다 먼저 CPU를 받는다 */
+#define PRIO_SENDER             3U      /* System, Normal Sender */
 #define PRIO_RECEIVER           2U
 
 #define SEND_GAP_TICKS          10U     /* Sender가 메시지 사이에 쉬는 시간 */
@@ -75,6 +82,7 @@ static orbit_msg_type_t s_rx_order[ TOTAL_MESSAGES ];   /* 꺼낸 유형의 순�
 static uint32_t s_rx_count;
 static uint32_t s_seq_errors;
 static uint32_t s_payload_errors;
+static UBaseType_t s_sender_prio[ ORBIT_MSG_TYPE_COUNT ];   /* 각 Sender가 실제로 받은 태스크 우선순위 */
 static SemaphoreHandle_t s_receiver_done;
 static volatile int s_exit_code = EXIT_SUCCESS;
 
@@ -112,6 +120,8 @@ static void sender_task( void * param )
 {
     const sender_arg_t * arg = ( const sender_arg_t * ) param;
     uint32_t i;
+
+    s_sender_prio[ arg->type ] = uxTaskPriorityGet( NULL );   /* 설정이 실제로 적용됐는지 판정에서 확인 */
 
     vTaskDelay( arg->start_delay );
 
@@ -238,6 +248,9 @@ static void checker_task( void * param )
     check( "같은 유형 안에서 순서 유지", s_seq_errors == 0U );
     check( "payload가 유형과 일치", s_payload_errors == 0U );
     check( "꺼낸 순서가 Emergency → System → Normal", order_ok );
+    check( "Emergency Sender 태스크 우선순위가 가장 높음",
+           ( s_sender_prio[ ORBIT_MSG_EMERGENCY ] > s_sender_prio[ ORBIT_MSG_SYSTEM ] ) &&
+           ( s_sender_prio[ ORBIT_MSG_EMERGENCY ] > s_sender_prio[ ORBIT_MSG_NORMAL ] ) );
     vLog( "결과: %s", ( s_exit_code == EXIT_SUCCESS ) ? "PASS" : "FAIL" );
 
     vTaskEndScheduler();
@@ -274,7 +287,9 @@ int main( void )
 
     for( type = 0; type < ORBIT_MSG_TYPE_COUNT; type++ )
     {
-        if( xTaskCreate( sender_task, "SENDER", configMINIMAL_STACK_SIZE, &s_sender_args[ type ], PRIO_SENDER, NULL ) != pdPASS )
+        UBaseType_t prio = ( type == ORBIT_MSG_EMERGENCY ) ? PRIO_SENDER_EMERGENCY : PRIO_SENDER;
+
+        if( xTaskCreate( sender_task, "SENDER", configMINIMAL_STACK_SIZE, &s_sender_args[ type ], prio, NULL ) != pdPASS )
         {
             fprintf( stderr, "태스크 생성 실패: SENDER\n" );
             return EXIT_FAILURE;
