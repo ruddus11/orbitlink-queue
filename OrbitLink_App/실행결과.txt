@@ -1,0 +1,32 @@
+[     0] OrbitLink 기본 송수신 앱 시작 (메시지 12개, Receiver는 300 tick에 시작)
+[     0] SENDER   TX   NORMAL    #1   seq=1
+[    10] SENDER   TX   NORMAL    #2   seq=2
+[    20] SENDER   TX   SYSTEM    #3   seq=1
+[    20] SENDER   TX   NORMAL    #4   seq=3
+[    30] SENDER   TX   SYSTEM    #5   seq=2
+[    31] SENDER   TX   NORMAL    #6   seq=4
+[    40] SENDER   TX   EMERGENCY #7   seq=1
+[    41] SENDER   TX   SYSTEM    #8   seq=3
+[    41] SENDER   TX   NORMAL    #9   seq=5
+[    52] SENDER   TX   EMERGENCY #10  seq=2
+[    52] SENDER   TX   NORMAL    #11  seq=6
+[    62] SENDER   TX   EMERGENCY #12  seq=3
+[   300] RECEIVER RX   EMERGENCY #7   seq=1 wait=260 "EMG:O2_LEVEL_LOW"
+[   321] RECEIVER RX   EMERGENCY #10  seq=2 wait=269 "EMG:O2_LEVEL_LOW"
+[   342] RECEIVER RX   EMERGENCY #12  seq=3 wait=280 "EMG:O2_LEVEL_LOW"
+[   362] RECEIVER RX   SYSTEM    #3   seq=1 wait=342 "SYS:HEARTBEAT"
+[   382] RECEIVER RX   SYSTEM    #5   seq=2 wait=352 "SYS:HEARTBEAT"
+[   402] RECEIVER RX   SYSTEM    #8   seq=3 wait=361 "SYS:HEARTBEAT"
+[   423] RECEIVER RX   NORMAL    #1   seq=1 wait=423 "NOR:TELEMETRY_BLOCK"
+[   444] RECEIVER RX   NORMAL    #2   seq=2 wait=434 "NOR:TELEMETRY_BLOCK"
+[   465] RECEIVER RX   NORMAL    #4   seq=3 wait=445 "NOR:TELEMETRY_BLOCK"
+[   486] RECEIVER RX   NORMAL    #6   seq=4 wait=455 "NOR:TELEMETRY_BLOCK"
+[   506] RECEIVER RX   NORMAL    #9   seq=5 wait=465 "NOR:TELEMETRY_BLOCK"
+[   526] RECEIVER RX   NORMAL    #11  seq=6 wait=474 "NOR:TELEMETRY_BLOCK"
+[   547] ---------------- 판정 ----------------
+[   548]   보낸 메시지를 전부 수신 (12개)      PASS
+[   548]   유형별 sent = received = 계획, 실패 0   PASS
+[   548]   같은 유형 안에서 순서 유지          PASS
+[   548]   payload가 유형과 일치                    PASS
+[   548]   꺼낸 순서가 Emergency → System → Normal PASS
+[   548] 결과: PASS
