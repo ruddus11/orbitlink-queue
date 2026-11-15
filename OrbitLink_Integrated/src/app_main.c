@@ -1,15 +1,15 @@
-// Sender 3종, Receiver, Logger가 XOR 암호화된 메시지를 우선순위 큐로 주고받는지 자동 판정하는 통합본
+// Integrated version: checks automatically that 3 Senders, a Receiver and a Logger exchange XOR-encrypted messages over the priority queue
 /*
- * app_main.c - OrbitLink 통합본 (경연 송수신 + Shushant XOR/Logger)
+ * app_main.c - OrbitLink integrated version (Cho's send/receive + Shushant's XOR/Logger)
  *
- *   Sender(NOR/SYS/EMG) ─ XOR 암호화 ─> mq_send() ─> [ 우선순위 큐 ] ─> mq_receive() ─ XOR 복호화 ─> Receiver
- *          모든 태스크 ── log_event() ──> [ 로그 큐 ] ──> Logger (출력은 여기서만)
+ *   Sender(NOR/SYS/EMG) ─ XOR encrypt ─> mq_send() ─> [ priority queues ] ─> mq_receive() ─ XOR decrypt ─> Receiver
+ *          every task ── log_event() ──> [ log queue ] ──> Logger (the only place that prints)
  *
- * 판정: 전부 수신, 유형별 통계, 같은 유형 안의 순서, 큐 안에서 암호화 상태,
- *       복호화 결과가 원문과 일치, Emergency → System → Normal 순서,
- *       Emergency Sender 태스크 우선순위가 가장 높음, 로그 손실 0.
- * 태스크 우선순위: Emergency Sender 4, System/Normal Sender 3 (큐의 처리 순서와 함께 Emergency를 우대).
- * Retry는 아직 없다. 붙일 자리는 main()의 mq_init() 다음 (mq_set_full_callback).
+ * Checks: all received, per-type statistics, order within each type, encrypted while queued,
+ *         decrypted text matches the original, Emergency -> System -> Normal order,
+ *         Emergency Sender has the highest task priority, no lost log lines.
+ * Task priority: Emergency Sender 4, System/Normal Senders 3 (favours Emergency together with the dequeue order).
+ * Retry is not included yet. It plugs in after mq_init() in main() (mq_set_full_callback).
  */
 
 #include <stdbool.h>
@@ -26,13 +26,13 @@
 #include "orbitlink_xor.h"
 
 #define PRIO_CHECKER            5U
-#define PRIO_SENDER_EMERGENCY   4U      /* Emergency Sender는 다른 Sender보다 먼저 CPU를 받는다 */
+#define PRIO_SENDER_EMERGENCY   4U      /* The Emergency Sender gets the CPU before the other Senders */
 #define PRIO_SENDER             3U      /* System, Normal Sender */
 #define PRIO_RECEIVER           2U
-#define PRIO_LOGGER             1U      /* 가장 낮다. 다른 태스크가 쉴 때 몰아서 출력한다 */
+#define PRIO_LOGGER             1U      /* Lowest. Prints in batches while the other tasks are idle */
 
 #define SEND_GAP_TICKS          10U
-#define RECEIVER_START_TICKS    300U    /* Sender가 모두 보낸 뒤에 Receiver를 시작해 우선순위를 결정적으로 판정한다 */
+#define RECEIVER_START_TICKS    300U    /* Start the Receiver after all Senders finish so priority can be judged deterministically */
 #define PROCESS_TICKS           20U
 #define RECEIVE_TIMEOUT_TICKS   1000U
 #define CHECKER_TIMEOUT_TICKS   5000U
@@ -47,11 +47,11 @@ typedef struct
 {
     orbit_msg_type_t type;
     uint32_t count;
-    TickType_t start_delay;     /* 유형마다 달리 해서 도착 순서를 섞는다 */
-    const char * text;          /* 보낼 원문. 수신 쪽에서 복호화 결과와 비교한다 */
+    TickType_t start_delay;     /* Differs per type to mix arrival order */
+    const char * text;          /* Original text. The receiving side compares the decrypted result with it */
 } sender_arg_t;
 
-/* 문구는 Shushant 코드의 샘플 메시지를 썼다. */
+/* Sample texts taken from Shushant's code. */
 static sender_arg_t s_sender_args[ ORBIT_MSG_TYPE_COUNT ] =
 {
     { ORBIT_MSG_EMERGENCY, COUNT_EMERGENCY, 40U, "ALERT: oxygen pressure low" },
@@ -62,9 +62,9 @@ static sender_arg_t s_sender_args[ ORBIT_MSG_TYPE_COUNT ] =
 static orbit_msg_type_t s_rx_order[ TOTAL_MESSAGES ];
 static uint32_t s_rx_count;
 static uint32_t s_seq_errors;
-static uint32_t s_not_encrypted;    /* 큐에서 꺼냈는데 평문이었던 메시지 수 */
-static uint32_t s_decrypt_errors;   /* 복호화 결과가 원문과 다른 메시지 수 */
-static UBaseType_t s_sender_prio[ ORBIT_MSG_TYPE_COUNT ];   /* 각 Sender가 실제로 받은 태스크 우선순위 */
+static uint32_t s_not_encrypted;    /* Messages that were plain text when taken from the queue */
+static uint32_t s_decrypt_errors;   /* Messages whose decrypted text differs from the original */
+static UBaseType_t s_sender_prio[ ORBIT_MSG_TYPE_COUNT ];   /* Task priority each Sender actually got */
 static SemaphoreHandle_t s_receiver_done;
 static volatile int s_exit_code = EXIT_SUCCESS;
 
@@ -79,7 +79,7 @@ static void sender_task( void * param )
     uint16_t len = ( uint16_t ) strlen( arg->text );
     uint32_t i;
 
-    s_sender_prio[ arg->type ] = uxTaskPriorityGet( NULL );   /* 설정이 실제로 적용됐는지 판정에서 확인 */
+    s_sender_prio[ arg->type ] = uxTaskPriorityGet( NULL );   /* The Checker verifies the setting really applied */
 
     vTaskDelay( arg->start_delay );
 
@@ -91,7 +91,7 @@ static void sender_task( void * param )
         must_ok( mq_msg_init( &msg, arg->type, arg->text, len ) );
         log_event( "CREATED", &msg, "\"%s\"", arg->text );
 
-        orbit_xor_encrypt( &msg );   /* 큐와 Retry 대기함에 평문이 남지 않도록 넣기 전에 암호화 */
+        orbit_xor_encrypt( &msg );   /* Encrypt before queueing so no plain text sits in the queue or retry inbox */
 
         if( mq_send( &msg, timeout ) == MQ_OK )
         {
@@ -130,7 +130,7 @@ static void receiver_task( void * param )
         text = s_sender_args[ msg.type ].text;
         len = ( uint16_t ) strlen( text );
 
-        /* 큐 안에서는 암호문이어야 한다. 표시와 실제 내용을 둘 다 본다. */
+        /* Must be ciphertext while queued. Check both the flag and the actual bytes. */
         if( ( msg.encrypted == 0U ) || ( memcmp( msg.payload, text, len ) == 0 ) )
         {
             s_not_encrypted++;
@@ -146,7 +146,7 @@ static void receiver_task( void * param )
             s_decrypt_errors++;
         }
 
-        /* payload는 문자열이 아니므로 길이를 지정해 출력한다. */
+        /* The payload is not a C string, so print it with an explicit length. */
         log_event( "DECRYPTED", &msg, "\"%.*s\"", ( int ) msg.payload_len, ( const char * ) msg.payload );
 
         s_rx_order[ s_rx_count ] = msg.type;
@@ -188,7 +188,7 @@ static void checker_task( void * param )
 
     if( xSemaphoreTake( s_receiver_done, pdMS_TO_TICKS( CHECKER_TIMEOUT_TICKS ) ) != pdTRUE )
     {
-        log_event( "CHECK", NULL, "Receiver가 제때 끝나지 않음" );
+        log_event( "CHECK", NULL, "The Receiver did not finish in time" );
         s_exit_code = EXIT_FAILURE;
     }
 
@@ -212,24 +212,24 @@ static void checker_task( void * param )
         }
     }
 
-    check( "보낸 메시지를 전부 수신 (12개)", s_rx_count == TOTAL_MESSAGES );
-    check( "유형별 sent = received = 계획, 실패 0", counts_ok );
-    check( "같은 유형 안에서 순서 유지", s_seq_errors == 0U );
-    check( "큐 안에서는 암호문 상태", s_not_encrypted == 0U );
-    check( "복호화 결과가 원문과 일치", s_decrypt_errors == 0U );
-    check( "꺼낸 순서가 Emergency -> System -> Normal", order_ok );
-    check( "Emergency Sender 태스크 우선순위가 가장 높음",
+    check( "All 12 messages received", s_rx_count == TOTAL_MESSAGES );
+    check( "Per type: sent = received = planned, 0 failed", counts_ok );
+    check( "Order kept within each type", s_seq_errors == 0U );
+    check( "Messages are encrypted while queued", s_not_encrypted == 0U );
+    check( "Decrypted text matches the original", s_decrypt_errors == 0U );
+    check( "Dequeue order Emergency -> System -> Normal", order_ok );
+    check( "Emergency Sender has the highest task priority",
            ( s_sender_prio[ ORBIT_MSG_EMERGENCY ] > s_sender_prio[ ORBIT_MSG_SYSTEM ] ) &&
            ( s_sender_prio[ ORBIT_MSG_EMERGENCY ] > s_sender_prio[ ORBIT_MSG_NORMAL ] ) );
-    check( "로그 손실 0", log_dropped() == 0U );   /* 마지막 판정이어야 위 줄들까지 포함해 센다 */
-    log_finish( ( s_exit_code == EXIT_SUCCESS ) ? "결과: PASS" : "결과: FAIL" );   /* Logger가 출력 후 스케줄러를 끝낸다 */
+    check( "No log lines lost", log_dropped() == 0U );   /* Must be the last check so the lines above are counted too */
+    log_finish( ( s_exit_code == EXIT_SUCCESS ) ? "RESULT: PASS" : "RESULT: FAIL" );   /* The Logger ends the scheduler after printing it */
 
     vTaskDelete( NULL );
 }
 
 void vAssertCalled( const char * file, unsigned long line )
 {
-    fprintf( stderr, "ASSERT 실패: %s:%lu\n", file, line );
+    fprintf( stderr, "ASSERT failed: %s:%lu\n", file, line );
     abort();
 }
 
@@ -241,13 +241,13 @@ int main( void )
 
     if( ( mq_init( MQ_MODE_PRIORITY ) != MQ_OK ) || !log_init() || ( s_receiver_done == NULL ) )
     {
-        fprintf( stderr, "초기화 실패 (configTOTAL_HEAP_SIZE 확인)\n" );
+        fprintf( stderr, "Initialisation failed (check configTOTAL_HEAP_SIZE)\n" );
         return EXIT_FAILURE;
     }
 
-    /* [Retry 담당] 여기서 mq_set_full_callback( 실패 콜백 ) 을 등록한다. */
+    /* [Retry owner] Register mq_set_full_callback( failure_callback ) here. */
 
-    log_event( "START", NULL, "OrbitLink 통합본 시작 (메시지 %u개, XOR key=0x%02X)",
+    log_event( "START", NULL, "OrbitLink integrated version started (%u messages, XOR key=0x%02X)",
                ( unsigned int ) TOTAL_MESSAGES, ( unsigned int ) ORBIT_XOR_KEY );
 
     for( type = 0; type < ORBIT_MSG_TYPE_COUNT; type++ )
@@ -256,7 +256,7 @@ int main( void )
 
         if( xTaskCreate( sender_task, "SENDER", configMINIMAL_STACK_SIZE, &s_sender_args[ type ], prio, NULL ) != pdPASS )
         {
-            fprintf( stderr, "태스크 생성 실패: SENDER\n" );
+            fprintf( stderr, "Failed to create task: SENDER\n" );
             return EXIT_FAILURE;
         }
     }
@@ -265,11 +265,11 @@ int main( void )
         ( xTaskCreate( logger_task, "LOGGER", configMINIMAL_STACK_SIZE, NULL, PRIO_LOGGER, NULL ) != pdPASS ) ||
         ( xTaskCreate( checker_task, "CHECKER", configMINIMAL_STACK_SIZE, NULL, PRIO_CHECKER, NULL ) != pdPASS ) )
     {
-        fprintf( stderr, "태스크 생성 실패 (configTOTAL_HEAP_SIZE 확인)\n" );
+        fprintf( stderr, "Failed to create task (check configTOTAL_HEAP_SIZE)\n" );
         return EXIT_FAILURE;
     }
 
-    vTaskStartScheduler();   /* Logger가 마지막 줄을 출력하고 vTaskEndScheduler()를 부르면 돌아온다 */
+    vTaskStartScheduler();   /* Returns when the Logger prints the last line and calls vTaskEndScheduler() */
 
     return s_exit_code;
 }

@@ -1,33 +1,34 @@
-// Sender 3종과 Receiver가 큐 모듈 위에서 메시지를 주고받는지 자동 판정하는 기본 송수신 앱
+// Basic send/receive app: checks automatically that 3 Senders and 1 Receiver exchange messages over the queue module
 /*
- * app_main.c - OrbitLink 기본 송수신 앱 (경연 파트)
+ * app_main.c - OrbitLink basic send/receive app (Cho's part)
  *
- * [구조]
+ * [Structure]
  *   Sender(NOR) ─┐
- *   Sender(SYS) ─┼─> mq_send() ──> [ msg_queue 모듈 ] ──> mq_receive() ──> Receiver
+ *   Sender(SYS) ─┼─> mq_send() ──> [ msg_queue module ] ──> mq_receive() ──> Receiver
  *   Sender(EMG) ─┘
- *   Checker : Receiver가 끝나면 결과를 판정하고 스케줄러를 끝낸다.
+ *   Checker : when the Receiver finishes, judges the result and ends the scheduler.
  *
- * [판정하는 것]
- *   1. 보낸 메시지가 전부 수신되었는가
- *   2. 같은 유형 안에서 순서(seq)가 지켜졌는가
- *   3. payload가 깨지지 않았는가 (유형별 접두어로 확인)
- *   4. 큐에 다 쌓인 뒤 꺼낼 때 Emergency → System → Normal 순서인가
- *   5. Emergency Sender의 태스크 우선순위가 다른 Sender보다 높은가
+ * [What is checked]
+ *   1. Every message sent was received
+ *   2. Order (seq) is kept within each type
+ *   3. The payload was not corrupted (checked by a per-type prefix)
+ *   4. With everything already queued, messages come out Emergency -> System -> Normal
+ *   5. The Emergency Sender has a higher task priority than the other Senders
  *
- * [Emergency를 두 단계로 우대한다]
- *   - 태스크 우선순위 : Emergency Sender 4, System/Normal Sender 3. 보낼 차례가 겹치면 먼저 CPU를 받는다.
- *   - 메시지 처리 순서 : 큐 모듈이 Emergency 큐부터 꺼낸다. Receiver가 무엇을 먼저 처리할지를 정한다.
- *   태스크 우선순위만으로는 이미 큐에 쌓인 Normal 뒤의 Emergency를 앞당길 수 없어서 두 가지를 함께 쓴다.
+ * [Emergency is favoured in two ways]
+ *   - Task priority          : Emergency Sender 4, System/Normal Senders 3. Gets the CPU first when sends overlap.
+ *   - Message dequeue order  : the queue module takes from the Emergency queue first. Decides what the Receiver handles first.
+ *   Task priority alone cannot move an Emergency ahead of Normals already waiting in a queue, so both are used.
  *
- * [왜 Receiver를 늦게 시작하는가]
- * Receiver 시작 전에 Sender가 모두 보내 두면 큐에는 도착 순서와 상관없이 전부 쌓여 있다.
- * 그 상태에서 꺼낸 순서가 곧 우선순위 처리 결과라서, 시간에 흔들리지 않고 판정할 수 있다.
+ * [Why the Receiver starts late]
+ * If all Senders finish before the Receiver starts, every message is already queued regardless
+ * of arrival order. The order they come out in is then exactly the priority result, so the
+ * check does not depend on timing.
  *
- * [다음 담당이 붙일 자리]
- *   - 암호화 : sender_task()의 mq_send() 직전 / receiver_task()의 mq_receive() 직후
- *   - Retry  : main()에서 mq_init() 다음에 mq_set_full_callback() 등록
- *   - Logger : vLog()를 로그 태스크 호출로 교체
+ * [Where the next owners plug in]
+ *   - Encryption : right before mq_send() in sender_task() / right after mq_receive() in receiver_task()
+ *   - Retry      : in main(), register mq_set_full_callback() after mq_init()
+ *   - Logger     : replace vLog() with calls to a logger task
  */
 
 #include <stdarg.h>
@@ -42,19 +43,19 @@
 
 #include "msg_queue.h"
 
-/* ---------- 실험 파라미터 ---------- */
+/* ---------- Experiment parameters ---------- */
 
-#define PRIO_CHECKER            5U      /* 판정 태스크. 가장 높아야 Receiver 종료를 바로 본다 */
-#define PRIO_SENDER_EMERGENCY   4U      /* Emergency Sender는 다른 Sender보다 먼저 CPU를 받는다 */
-#define PRIO_SENDER             3U      /* System, Normal Sender */
+#define PRIO_CHECKER            5U      /* Checker task. Must be highest to see the Receiver finish immediately */
+#define PRIO_SENDER_EMERGENCY   4U      /* The Emergency Sender gets the CPU before the other Senders */
+#define PRIO_SENDER             3U      /* System and Normal Senders */
 #define PRIO_RECEIVER           2U
 
-#define SEND_GAP_TICKS          10U     /* Sender가 메시지 사이에 쉬는 시간 */
-#define RECEIVER_START_TICKS    300U    /* Sender가 모두 보낸 뒤에 Receiver를 시작한다 */
-#define PROCESS_TICKS           20U     /* Receiver가 메시지 1개를 처리하는 시간 */
-#define RECEIVE_TIMEOUT_TICKS   1000U   /* 이 시간 동안 메시지가 없으면 Receiver는 포기한다 */
-#define CHECKER_TIMEOUT_TICKS   5000U   /* Receiver 종료를 기다리는 최대 시간 */
-#define EMERGENCY_TIMEOUT       50U     /* Emergency는 큐가 차도 이만큼 기다려서 넣는다 */
+#define SEND_GAP_TICKS          10U     /* Pause between messages in a Sender */
+#define RECEIVER_START_TICKS    300U    /* The Receiver starts after all Senders have sent */
+#define PROCESS_TICKS           20U     /* Time the Receiver spends on one message */
+#define RECEIVE_TIMEOUT_TICKS   1000U   /* The Receiver gives up if no message arrives for this long */
+#define CHECKER_TIMEOUT_TICKS   5000U   /* Max time to wait for the Receiver to finish */
+#define EMERGENCY_TIMEOUT       50U     /* Emergency waits this long for a free slot even if the queue is full */
 
 #define COUNT_EMERGENCY         3U
 #define COUNT_SYSTEM            3U
@@ -64,9 +65,9 @@
 typedef struct
 {
     orbit_msg_type_t type;
-    uint32_t count;             /* 보낼 메시지 수 */
-    TickType_t start_delay;     /* 첫 전송 전 대기. 유형마다 달리 해서 도착 순서를 섞는다 */
-    const char * prefix;        /* payload 접두어. 수신 쪽에서 유형과 맞는지 확인한다 */
+    uint32_t count;             /* Number of messages to send */
+    TickType_t start_delay;     /* Wait before the first send. Differs per type to mix arrival order */
+    const char * prefix;        /* Payload prefix. The receiving side checks it matches the type */
 } sender_arg_t;
 
 static sender_arg_t s_sender_args[ ORBIT_MSG_TYPE_COUNT ] =
@@ -76,19 +77,19 @@ static sender_arg_t s_sender_args[ ORBIT_MSG_TYPE_COUNT ] =
     { ORBIT_MSG_NORMAL,    COUNT_NORMAL,    0U,  "NOR:TELEMETRY_BLOCK" },
 };
 
-/* ---------- Receiver가 기록하고 Checker가 판정하는 값 ---------- */
+/* ---------- Values recorded by the Receiver and judged by the Checker ---------- */
 
-static orbit_msg_type_t s_rx_order[ TOTAL_MESSAGES ];   /* 꺼낸 유형의 순서 */
+static orbit_msg_type_t s_rx_order[ TOTAL_MESSAGES ];   /* Order of types taken out */
 static uint32_t s_rx_count;
 static uint32_t s_seq_errors;
 static uint32_t s_payload_errors;
-static UBaseType_t s_sender_prio[ ORBIT_MSG_TYPE_COUNT ];   /* 각 Sender가 실제로 받은 태스크 우선순위 */
+static UBaseType_t s_sender_prio[ ORBIT_MSG_TYPE_COUNT ];   /* Task priority each Sender actually got */
 static SemaphoreHandle_t s_receiver_done;
 static volatile int s_exit_code = EXIT_SUCCESS;
 
 /*
- * 태스크에서 출력할 때는 반드시 이 함수만 쓴다. POSIX 포트에서 printf를 그냥 쓰면
- * 교착이 생길 수 있어서 크리티컬 섹션으로 감싼다. 로그 줄이 섞이지도 않는다.
+ * Tasks must print only through this function. Plain printf in the POSIX port can deadlock,
+ * so it is wrapped in a critical section. Log lines also never get mixed.
  */
 static void vLog( const char * format, ... ) __attribute__( ( format( printf, 1, 2 ) ) );
 
@@ -110,7 +111,7 @@ static void vLog( const char * format, ... )
     va_end( args );
 }
 
-/* 반드시 성공해야 하는 호출을 검사한다. assert 안에 호출을 넣으면 assert를 끌 때 호출도 사라진다. */
+/* Check a call that must succeed. Putting the call inside assert would remove it when asserts are disabled. */
 static void must_ok( mq_result_t result )
 {
     configASSERT( result == MQ_OK );
@@ -121,7 +122,7 @@ static void sender_task( void * param )
     const sender_arg_t * arg = ( const sender_arg_t * ) param;
     uint32_t i;
 
-    s_sender_prio[ arg->type ] = uxTaskPriorityGet( NULL );   /* 설정이 실제로 적용됐는지 판정에서 확인 */
+    s_sender_prio[ arg->type ] = uxTaskPriorityGet( NULL );   /* The Checker verifies the setting really applied */
 
     vTaskDelay( arg->start_delay );
 
@@ -132,7 +133,7 @@ static void sender_task( void * param )
 
         must_ok( mq_msg_init( &msg, arg->type, arg->prefix, ( uint16_t ) strlen( arg->prefix ) ) );
 
-        /* [암호화 담당] 여기서 msg.payload 를 XOR 하고 msg.encrypted = 1 로 바꾼다. */
+        /* [Encryption owner] XOR msg.payload here and set msg.encrypted = 1. */
         if( mq_send( &msg, timeout ) == MQ_OK )
         {
             vLog( "SENDER   TX   %-9s #%-3lu seq=%lu", orbit_msg_type_name( msg.type ),
@@ -140,7 +141,7 @@ static void sender_task( void * param )
         }
         else
         {
-            vLog( "SENDER   FAIL %-9s #%-3lu (큐가 가득 참)", orbit_msg_type_name( msg.type ), ( unsigned long ) msg.id );
+            vLog( "SENDER   FAIL %-9s #%-3lu (queue full)", orbit_msg_type_name( msg.type ), ( unsigned long ) msg.id );
         }
 
         vTaskDelay( SEND_GAP_TICKS );
@@ -165,7 +166,7 @@ static void receiver_task( void * param )
             break;
         }
 
-        /* [암호화 담당] 여기서 msg.encrypted 가 1이면 payload 를 XOR 로 복호화한다. */
+        /* [Encryption owner] If msg.encrypted is 1, decrypt the payload with XOR here. */
 
         s_rx_order[ s_rx_count ] = msg.type;
         s_rx_count++;
@@ -187,17 +188,17 @@ static void receiver_task( void * param )
               ( unsigned long ) ( xTaskGetTickCount() - msg.enqueue_tick ),
               ( int ) msg.payload_len, ( const char * ) msg.payload );
 
-        vTaskDelay( PROCESS_TICKS );   /* 메시지 처리 시간 흉내 */
+        vTaskDelay( PROCESS_TICKS );   /* Simulated processing time */
     }
 
     xSemaphoreGive( s_receiver_done );
     vTaskDelete( NULL );
 }
 
-/* 한 항목을 판정하고 결과 줄을 출력한다. 실패하면 종료 코드를 1로 바꾼다. */
+/* Judge one item and print a result line. On failure the exit code becomes 1. */
 static void check( const char * name, bool passed )
 {
-    vLog( "  %-46s %s", name, passed ? "PASS" : "FAIL" );
+    vLog( "  %-48s %s", name, passed ? "PASS" : "FAIL" );
 
     if( !passed )
     {
@@ -217,13 +218,13 @@ static void checker_task( void * param )
 
     if( xSemaphoreTake( s_receiver_done, pdMS_TO_TICKS( CHECKER_TIMEOUT_TICKS ) ) != pdTRUE )
     {
-        vLog( "Receiver가 제때 끝나지 않았습니다." );
+        vLog( "The Receiver did not finish in time." );
         s_exit_code = EXIT_FAILURE;
     }
 
     must_ok( mq_get_status( &status ) );
 
-    /* Receiver 시작 전에 전부 쌓였으므로, 꺼낸 순서는 유형 번호(E=0, S=1, N=2)가 줄지 않아야 한다. */
+    /* Everything was queued before the Receiver started, so type numbers (E=0, S=1, N=2) must never go down. */
     for( i = 1; i < s_rx_count; i++ )
     {
         if( s_rx_order[ i ] < s_rx_order[ i - 1U ] )
@@ -242,25 +243,25 @@ static void checker_task( void * param )
         }
     }
 
-    vLog( "---------------- 판정 ----------------" );
-    check( "보낸 메시지를 전부 수신 (12개)", s_rx_count == TOTAL_MESSAGES );
-    check( "유형별 sent = received = 계획, 실패 0", counts_ok );
-    check( "같은 유형 안에서 순서 유지", s_seq_errors == 0U );
-    check( "payload가 유형과 일치", s_payload_errors == 0U );
-    check( "꺼낸 순서가 Emergency → System → Normal", order_ok );
-    check( "Emergency Sender 태스크 우선순위가 가장 높음",
+    vLog( "---------------- CHECKS ----------------" );
+    check( "All 12 messages received", s_rx_count == TOTAL_MESSAGES );
+    check( "Per type: sent = received = planned, 0 failed", counts_ok );
+    check( "Order kept within each type", s_seq_errors == 0U );
+    check( "Payload matches its type", s_payload_errors == 0U );
+    check( "Dequeue order Emergency -> System -> Normal", order_ok );
+    check( "Emergency Sender has the highest task priority",
            ( s_sender_prio[ ORBIT_MSG_EMERGENCY ] > s_sender_prio[ ORBIT_MSG_SYSTEM ] ) &&
            ( s_sender_prio[ ORBIT_MSG_EMERGENCY ] > s_sender_prio[ ORBIT_MSG_NORMAL ] ) );
-    vLog( "결과: %s", ( s_exit_code == EXIT_SUCCESS ) ? "PASS" : "FAIL" );
+    vLog( "RESULT: %s", ( s_exit_code == EXIT_SUCCESS ) ? "PASS" : "FAIL" );
 
     vTaskEndScheduler();
     vTaskDelete( NULL );
 }
 
-/* configASSERT 실패 시 호출된다(FreeRTOSConfig.h). 위치를 출력하고 바로 멈춘다. */
+/* Called when configASSERT fails (FreeRTOSConfig.h). Prints the location and stops. */
 void vAssertCalled( const char * file, unsigned long line )
 {
-    fprintf( stderr, "ASSERT 실패: %s:%lu\n", file, line );
+    fprintf( stderr, "ASSERT failed: %s:%lu\n", file, line );
     abort();
 }
 
@@ -270,7 +271,7 @@ int main( void )
 
     if( mq_init( MQ_MODE_PRIORITY ) != MQ_OK )
     {
-        fprintf( stderr, "mq_init 실패 (configTOTAL_HEAP_SIZE 확인)\n" );
+        fprintf( stderr, "mq_init failed (check configTOTAL_HEAP_SIZE)\n" );
         return EXIT_FAILURE;
     }
 
@@ -278,11 +279,11 @@ int main( void )
 
     if( s_receiver_done == NULL )
     {
-        fprintf( stderr, "세마포어 생성 실패\n" );
+        fprintf( stderr, "Failed to create semaphore\n" );
         return EXIT_FAILURE;
     }
 
-    vLog( "OrbitLink 기본 송수신 앱 시작 (메시지 %u개, Receiver는 %u tick에 시작)",
+    vLog( "OrbitLink basic send/receive app started (%u messages, Receiver starts at tick %u)",
           ( unsigned int ) TOTAL_MESSAGES, ( unsigned int ) RECEIVER_START_TICKS );
 
     for( type = 0; type < ORBIT_MSG_TYPE_COUNT; type++ )
@@ -291,7 +292,7 @@ int main( void )
 
         if( xTaskCreate( sender_task, "SENDER", configMINIMAL_STACK_SIZE, &s_sender_args[ type ], prio, NULL ) != pdPASS )
         {
-            fprintf( stderr, "태스크 생성 실패: SENDER\n" );
+            fprintf( stderr, "Failed to create task: SENDER\n" );
             return EXIT_FAILURE;
         }
     }
@@ -299,11 +300,11 @@ int main( void )
     if( ( xTaskCreate( receiver_task, "RECEIVER", configMINIMAL_STACK_SIZE, NULL, PRIO_RECEIVER, NULL ) != pdPASS ) ||
         ( xTaskCreate( checker_task, "CHECKER", configMINIMAL_STACK_SIZE, NULL, PRIO_CHECKER, NULL ) != pdPASS ) )
     {
-        fprintf( stderr, "태스크 생성 실패 (configTOTAL_HEAP_SIZE 확인)\n" );
+        fprintf( stderr, "Failed to create task (check configTOTAL_HEAP_SIZE)\n" );
         return EXIT_FAILURE;
     }
 
-    /* 정상이라면 Checker가 vTaskEndScheduler()를 호출할 때 여기로 돌아온다. */
+    /* Normally returns here when the Checker calls vTaskEndScheduler(). */
     vTaskStartScheduler();
 
     return s_exit_code;

@@ -1,0 +1,33 @@
+[     0] OrbitLink basic send/receive app started (12 messages, Receiver starts at tick 300)
+[     0] SENDER   TX   NORMAL    #1   seq=1
+[    10] SENDER   TX   NORMAL    #2   seq=2
+[    20] SENDER   TX   SYSTEM    #3   seq=1
+[    20] SENDER   TX   NORMAL    #4   seq=3
+[    30] SENDER   TX   SYSTEM    #5   seq=2
+[    30] SENDER   TX   NORMAL    #6   seq=4
+[    41] SENDER   TX   EMERGENCY #7   seq=1
+[    41] SENDER   TX   SYSTEM    #8   seq=3
+[    41] SENDER   TX   NORMAL    #9   seq=5
+[    51] SENDER   TX   EMERGENCY #10  seq=2
+[    51] SENDER   TX   NORMAL    #11  seq=6
+[    61] SENDER   TX   EMERGENCY #12  seq=3
+[   300] RECEIVER RX   EMERGENCY #7   seq=1 wait=259 "EMG:O2_LEVEL_LOW"
+[   320] RECEIVER RX   EMERGENCY #10  seq=2 wait=269 "EMG:O2_LEVEL_LOW"
+[   340] RECEIVER RX   EMERGENCY #12  seq=3 wait=279 "EMG:O2_LEVEL_LOW"
+[   360] RECEIVER RX   SYSTEM    #3   seq=1 wait=340 "SYS:HEARTBEAT"
+[   380] RECEIVER RX   SYSTEM    #5   seq=2 wait=350 "SYS:HEARTBEAT"
+[   400] RECEIVER RX   SYSTEM    #8   seq=3 wait=359 "SYS:HEARTBEAT"
+[   420] RECEIVER RX   NORMAL    #1   seq=1 wait=420 "NOR:TELEMETRY_BLOCK"
+[   440] RECEIVER RX   NORMAL    #2   seq=2 wait=430 "NOR:TELEMETRY_BLOCK"
+[   460] RECEIVER RX   NORMAL    #4   seq=3 wait=440 "NOR:TELEMETRY_BLOCK"
+[   480] RECEIVER RX   NORMAL    #6   seq=4 wait=450 "NOR:TELEMETRY_BLOCK"
+[   500] RECEIVER RX   NORMAL    #9   seq=5 wait=459 "NOR:TELEMETRY_BLOCK"
+[   520] RECEIVER RX   NORMAL    #11  seq=6 wait=469 "NOR:TELEMETRY_BLOCK"
+[   540] ---------------- CHECKS ----------------
+[   540]   All 12 messages received                         PASS
+[   540]   Per type: sent = received = planned, 0 failed    PASS
+[   540]   Order kept within each type                      PASS
+[   540]   Payload matches its type                         PASS
+[   540]   Dequeue order Emergency -> System -> Normal      PASS
+[   540]   Emergency Sender has the highest task priority   PASS
+[   540] RESULT: PASS

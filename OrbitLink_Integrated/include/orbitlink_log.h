@@ -1,4 +1,4 @@
-// 로그 큐와 Logger 태스크 API. 출력은 Logger 태스크 한 곳에서만 한다 (Shushant 구조를 비차단으로 변경)
+// Log queue and Logger task API. Only the Logger task prints (Shushant's design, changed to non-blocking)
 #ifndef ORBITLINK_LOG_H
 #define ORBITLINK_LOG_H
 
@@ -7,23 +7,23 @@
 
 #include "orbitlink_msg.h"
 
-/* 스케줄러 시작 전에 한 번 부른다. 로그 큐를 만든다. */
+/* Call once before starting the scheduler. Creates the log queue. */
 bool log_init( void );
 
 /*
- * 사건 하나를 로그 큐에 넣는다. 어느 태스크에서 불러도 된다.
- * 큐가 가득 차면 기다리지 않고 버린 뒤 개수만 센다. 로그 때문에 Sender가 멈추면 안 되기 때문이다.
- * msg가 NULL이면 메시지와 관계없는 사건이다.
+ * Put one event into the log queue. Any task may call it.
+ * If the queue is full the event is dropped without waiting and only counted, because
+ * logging must never stop a Sender. A NULL msg means the event is not tied to a message.
  */
 void log_event( const char * event, const orbit_msg_t * msg, const char * format, ... ) __attribute__( ( format( printf, 3, 4 ) ) );
 
-/* 버려진 로그 개수 */
+/* Number of dropped log entries */
 uint32_t log_dropped( void );
 
-/* 마지막 줄을 보낸다. 이 줄은 버리지 않고 기다려서 넣으며, Logger가 출력한 뒤 스케줄러를 끝낸다. */
+/* Send the final line. It waits instead of being dropped, and the Logger ends the scheduler after printing it. */
 void log_finish( const char * text );
 
-/* Logger 태스크 본체. 가장 낮은 우선순위로 만든다. */
+/* Logger task body. Create it with the lowest priority. */
 void logger_task( void * param );
 
 #endif /* ORBITLINK_LOG_H */

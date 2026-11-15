@@ -1,4 +1,4 @@
-// XOR 암호화와 복호화 구현. 같은 키로 두 번 XOR하면 원문이 돌아온다
+// XOR encryption and decryption. XOR-ing twice with the same key gives back the original
 #include "orbitlink_xor.h"
 
 static void xor_bytes( uint8_t * data, uint16_t len )

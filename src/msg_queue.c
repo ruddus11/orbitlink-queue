@@ -1,23 +1,23 @@
 /*
- * msg_queue.c - OrbitLink 메시지 큐 모듈 구현
+ * msg_queue.c - OrbitLink message queue module, implementation
  *
- * [구조]
+ * [Structure]
  *
- *   mq_send() ──> [ 0: EMERGENCY 큐 ] ─┐
- *             ──> [ 1: SYSTEM    큐 ] ─┼─> mq_receive() : 항상 0번 큐부터 확인
- *             ──> [ 2: NORMAL    큐 ] ─┘
+ *   mq_send() ──> [ 0: EMERGENCY queue ] ─┐
+ *             ──> [ 1: SYSTEM    queue ] ─┼─> mq_receive() : always checks queue 0 first
+ *             ──> [ 2: NORMAL    queue ] ─┘
  *
- *   s_msg_count : 세 큐에 들어 있는 메시지 총 개수를 세는 카운팅 세마포어
+ *   s_msg_count : counting semaphore holding the total number of messages in the three queues
  *
- * [왜 카운팅 세마포어가 필요한가]
- * 세마포어가 없으면 Receiver는 메시지가 왔는지 알려고 세 큐를 계속 돌아봐야 하고
- * (폴링), 그동안 CPU를 낭비한다. 큐 하나에서만 기다리면 다른 큐의 메시지를 놓친다.
- * 세마포어로 기다리면 메시지가 없는 동안 Receiver가 Blocked 상태로 잠들어 있다가
- * 어느 큐에든 메시지가 들어오는 순간 깨어난다.
+ * [Why a counting semaphore]
+ * Without it the Receiver would have to keep checking all three queues to see whether a
+ * message arrived (polling), wasting CPU. Waiting on only one queue would miss the others.
+ * Waiting on the semaphore keeps the Receiver Blocked while there is nothing to do and wakes
+ * it the moment a message enters any queue.
  *
- * [왜 메시지 처리 순서가 보장되는가]
- * mq_receive()는 호출될 때마다 EMERGENCY 큐부터 다시 확인한다. 즉 처리 순서는
- * 태스크 우선순위가 아니라 "이 파일의 꺼내는 순서"가 결정한다.
+ * [Why the processing order is guaranteed]
+ * Every call to mq_receive() starts again from the EMERGENCY queue. So the processing order
+ * is decided by "the dequeue order in this file", not by task priority.
  */
 
 #include "msg_queue.h"
@@ -28,33 +28,33 @@
 #include "semphr.h"
 #include "task.h"
 
-#define PRIORITY_QUEUE_COUNT    ORBIT_MSG_TYPE_COUNT    /* 우선순위 모드의 큐 개수 */
+#define PRIORITY_QUEUE_COUNT    ORBIT_MSG_TYPE_COUNT    /* Number of queues in priority mode */
 #define TOTAL_CAPACITY          ( MQ_LEN_EMERGENCY + MQ_LEN_SYSTEM + MQ_LEN_NORMAL )
 
-/* 유형별 큐 길이. 인덱스는 orbit_msg_type_t 값과 같다. */
+/* Per-type queue length. The index equals the orbit_msg_type_t value. */
 static const uint32_t s_queue_length[ PRIORITY_QUEUE_COUNT ] = { MQ_LEN_EMERGENCY, MQ_LEN_SYSTEM, MQ_LEN_NORMAL };
 
-/* 모듈 내부 상태. 다른 파일에서는 mq_* 함수로만 접근한다. */
-static int s_initialized;                               /* mq_init 후 1 */
+/* Internal module state. Other files access it only through mq_* functions. */
+static int s_initialized;                               /* 1 after mq_init */
 static mq_mode_t s_mode;
-static UBaseType_t s_queue_count;                       /* 실제로 만든 큐 개수 (3 또는 1) */
+static UBaseType_t s_queue_count;                       /* Number of queues actually created (3 or 1) */
 static QueueHandle_t s_queues[ PRIORITY_QUEUE_COUNT ];
 static SemaphoreHandle_t s_msg_count;
 
-/* 아래 값은 여러 태스크가 건드리므로 반드시 크리티컬 섹션 안에서 읽고 쓴다. */
+/* Several tasks touch the values below, so always read and write them inside a critical section. */
 static mq_type_status_t s_stats[ ORBIT_MSG_TYPE_COUNT ];
-static uint32_t s_peak[ PRIORITY_QUEUE_COUNT ];         /* 실제 큐별 최대 길이 */
+static uint32_t s_peak[ PRIORITY_QUEUE_COUNT ];         /* Peak length per real queue */
 static uint32_t s_next_id;
 static uint32_t s_next_seq[ ORBIT_MSG_TYPE_COUNT ];
 static mq_full_callback_t s_full_callback;
 
-/* 유형 → 실제 큐 번호. 단일 FIFO 모드에서는 모든 유형이 0번 큐를 함께 쓴다. */
+/* Type -> real queue index. In single-FIFO mode every type shares queue 0. */
 static UBaseType_t queue_index( orbit_msg_type_t type )
 {
     return ( s_mode == MQ_MODE_SINGLE_FIFO ) ? 0U : ( UBaseType_t ) type;
 }
 
-/* 유형 값이 올바른지 확인. enum은 정수라서 범위 밖 값이 들어올 수 있다. */
+/* Check that the type is valid. An enum is an int, so out-of-range values can come in. */
 static int is_valid_type( orbit_msg_type_t type )
 {
     return ( ( int ) type >= 0 ) && ( ( int ) type < ( int ) ORBIT_MSG_TYPE_COUNT );
@@ -91,12 +91,12 @@ mq_result_t mq_init( mq_mode_t mode )
         }
     }
 
-    /* 최댓값 = 모든 큐가 가득 찼을 때의 메시지 수, 시작값 = 0 */
+    /* Max = number of messages when every queue is full, initial = 0 */
     s_msg_count = ( i == s_queue_count ) ? xSemaphoreCreateCounting( TOTAL_CAPACITY, 0 ) : NULL;
 
     if( s_msg_count == NULL )
     {
-        /* 일부만 만들어졌다면 메모리가 새지 않도록 되돌린다. */
+        /* If only some were created, undo them so no memory leaks. */
         for( i = 0; i < s_queue_count; i++ )
         {
             if( s_queues[ i ] != NULL )
@@ -158,7 +158,7 @@ mq_result_t mq_msg_init( orbit_msg_t * msg, orbit_msg_type_t type, const void * 
         memcpy( msg->payload, payload, len );
     }
 
-    /* 번호 발급은 Sender끼리 공유하는 값이라 크리티컬 섹션으로 보호한다. */
+    /* Numbering is shared between Senders, so protect it with a critical section. */
     taskENTER_CRITICAL();
     {
         msg->id = s_next_id++;
@@ -186,9 +186,9 @@ mq_result_t mq_send( const orbit_msg_t * msg, TickType_t timeout )
     }
 
     /*
-     * 원본은 const이므로 복사본에 값을 채워 넣는다. 대기 시간의 시작점은 mq_send를
-     * 부른 시각이다. timeout 동안 빈자리를 기다린 시간도 메시지 입장에서는 대기이기
-     * 때문에 그 시간까지 포함되도록 큐에 넣기 전에 기록한다.
+     * The original is const, so fill in values on a copy. Wait time starts when mq_send
+     * is called. Time spent waiting for a free slot during timeout is also waiting from the
+     * message's point of view, so record it before inserting.
      */
     copy = *msg;
     copy.priority = orbit_msg_priority_of( msg->type );
@@ -210,7 +210,7 @@ mq_result_t mq_send( const orbit_msg_t * msg, TickType_t timeout )
         }
         taskEXIT_CRITICAL();
 
-        /* 메시지를 넣은 뒤에 Give 해야 Receiver가 빈 큐를 보는 일이 없다. */
+        /* Give only after inserting, so the Receiver never sees an empty queue. */
         ( void ) xSemaphoreGive( s_msg_count );
 
         return MQ_OK;
@@ -223,7 +223,7 @@ mq_result_t mq_send( const orbit_msg_t * msg, TickType_t timeout )
     }
     taskEXIT_CRITICAL();
 
-    /* 콜백은 크리티컬 섹션 밖에서 부른다. 안에서 부르면 콜백이 큐 API를 쓸 수 없다. */
+    /* Call the callback outside the critical section; inside it the callback could not use queue APIs. */
     if( callback != NULL )
     {
         callback( &copy );
@@ -247,16 +247,16 @@ mq_result_t mq_receive( orbit_msg_t * msg, TickType_t timeout )
         return MQ_ERR_PARAM;
     }
 
-    /* 메시지가 하나라도 생길 때까지 잠들어 있는다. */
+    /* Sleep until at least one message exists. */
     if( xSemaphoreTake( s_msg_count, timeout ) != pdTRUE )
     {
         return MQ_ERR_EMPTY;
     }
 
     /*
-     * 핵심 부분: 매번 0번(EMERGENCY) 큐부터 다시 확인한다. 대기 시간 0으로 꺼내므로
-     * 비어 있으면 바로 다음 큐로 넘어간다. 앞선 큐에 메시지가 있는 한 뒤쪽 큐는
-     * 보지 않으므로 긴급 메시지가 일반 메시지를 앞지른다.
+     * Core part: always start again from queue 0 (EMERGENCY). Receiving with zero wait
+     * moves on to the next queue immediately if one is empty. Later queues are never looked
+     * at while an earlier queue has a message, so emergency messages overtake normal ones.
      */
     for( index = 0; index < s_queue_count; index++ )
     {
@@ -266,7 +266,7 @@ mq_result_t mq_receive( orbit_msg_t * msg, TickType_t timeout )
         }
     }
 
-    /* Give는 큐에 넣은 뒤에만 하므로 Take에 성공했다면 메시지가 반드시 있다. */
+    /* Give happens only after an insert, so a successful Take guarantees a message exists. */
     configASSERT( index < s_queue_count );
 
     waited = ( uint32_t ) ( xTaskGetTickCount() - msg->enqueue_tick );
@@ -304,7 +304,7 @@ mq_result_t mq_get_status( mq_status_t * status )
 
     status->mode = s_mode;
 
-    /* 한 번에 복사해야 sent와 received가 서로 다른 시점의 값이 되는 일이 없다. */
+    /* Copy everything at once so sent and received are never from different moments. */
     taskENTER_CRITICAL();
     {
         for( type = 0; type < ( int ) ORBIT_MSG_TYPE_COUNT; type++ )

@@ -1,4 +1,4 @@
-// 로그 큐에 사건을 모아 Logger 태스크가 tick 타임스탬프와 함께 출력하는 구현
+// Logger implementation: events are collected in a log queue and the Logger task prints them with a tick timestamp
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,10 +17,10 @@ typedef struct
 {
     TickType_t tick;
     char event[ LOG_EVENT_LEN ];
-    int32_t type;                   /* -1 = 메시지와 관계없음 */
+    int32_t type;                   /* -1 = not tied to a message */
     uint32_t id;
     char info[ LOG_INFO_LEN ];
-    bool is_last;                   /* true면 Logger가 출력 후 스케줄러를 끝낸다 */
+    bool is_last;                   /* If true, the Logger ends the scheduler after printing it */
 } log_entry_t;
 
 static QueueHandle_t s_log_queue;
@@ -32,7 +32,7 @@ bool log_init( void )
     return s_log_queue != NULL;
 }
 
-/* 서식 처리도 크리티컬 섹션 안에서 한다. POSIX 포트에서 stdio 함수가 태스크 전환에 끊기지 않게 하려는 것이다. */
+/* Formatting is also done inside a critical section so stdio is never interrupted by a task switch in the POSIX port. */
 static void fill_entry( log_entry_t * e, const char * event, const orbit_msg_t * msg, const char * format, va_list args )
 {
     memset( e, 0, sizeof( *e ) );
